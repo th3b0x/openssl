@@ -34,6 +34,7 @@ static int rsa_cms_encrypt(CMS_RecipientInfo *ri);
 #endif
 
 static RSA_PSS_PARAMS *rsa_pss_decode(const X509_ALGOR *alg);
+static int rsa_sync_to_pss_params_30(RSA *rsa);
 
 /* Set any parameters associated with pkey */
 static int rsa_param_encode(const EVP_PKEY *pkey,
@@ -78,6 +79,8 @@ static int rsa_param_decode(RSA *rsa, const X509_ALGOR *alg)
     rsa->pss = rsa_pss_decode(alg);
     if (rsa->pss == NULL)
         return 0;
+    if (!rsa_sync_to_pss_params_30(rsa))
+        return 0;
     return 1;
 }
 
@@ -110,14 +113,26 @@ static int rsa_pub_decode(EVP_PKEY *pkey, const X509_PUBKEY *pubkey)
 
     if (!X509_PUBKEY_get0_param(NULL, &p, &pklen, &alg, pubkey))
         return 0;
-    if ((rsa = d2i_RSAPublicKey(NULL, &p, pklen)) == NULL) {
-        RSAerr(RSA_F_RSA_PUB_DECODE, ERR_R_RSA_LIB);
+    if ((rsa = d2i_RSAPublicKey(NULL, &p, pklen)) == NULL)
         return 0;
-    }
     if (!rsa_param_decode(rsa, alg)) {
         RSA_free(rsa);
         return 0;
     }
+
+    RSA_clear_flags(rsa, RSA_FLAG_TYPE_MASK);
+    switch (pkey->ameth->pkey_id) {
+    case EVP_PKEY_RSA:
+        RSA_set_flags(rsa, RSA_FLAG_TYPE_RSA);
+        break;
+    case EVP_PKEY_RSA_PSS:
+        RSA_set_flags(rsa, RSA_FLAG_TYPE_RSASSAPSS);
+        break;
+    default:
+        /* Leave the type bits zero */
+        break;
+    }
+
     if (!EVP_PKEY_assign(pkey, pkey->ameth->pkey_id, rsa)) {
         RSA_free(rsa);
         return 0;
@@ -127,6 +142,15 @@ static int rsa_pub_decode(EVP_PKEY *pkey, const X509_PUBKEY *pubkey)
 
 static int rsa_pub_cmp(const EVP_PKEY *a, const EVP_PKEY *b)
 {
+    /*
+     * Don't check the public/private key, this is mostly for smart
+     * cards.
+     */
+    if (((RSA_flags(a->pkey.rsa) & RSA_METHOD_FLAG_NO_CHECK))
+            || (RSA_flags(b->pkey.rsa) & RSA_METHOD_FLAG_NO_CHECK)) {
+        return 1;
+    }
+
     if (BN_cmp(b->pkey.rsa->n, a->pkey.rsa->n) != 0
         || BN_cmp(b->pkey.rsa->e, a->pkey.rsa->e) != 0)
         return 0;
@@ -138,10 +162,8 @@ static int old_rsa_priv_decode(EVP_PKEY *pkey,
 {
     RSA *rsa;
 
-    if ((rsa = d2i_RSAPrivateKey(NULL, pder, derlen)) == NULL) {
-        RSAerr(RSA_F_OLD_RSA_PRIV_DECODE, ERR_R_RSA_LIB);
+    if ((rsa = d2i_RSAPrivateKey(NULL, pder, derlen)) == NULL)
         return 0;
-    }
     EVP_PKEY_assign(pkey, pkey->ameth->pkey_id, rsa);
     return 1;
 }
@@ -679,7 +701,7 @@ static ASN1_STRING *rsa_ctx_to_pss_string(EVP_PKEY_CTX *pkctx)
  */
 
 static int rsa_pss_to_ctx(EVP_MD_CTX *ctx, EVP_PKEY_CTX *pkctx,
-                          X509_ALGOR *sigalg, EVP_PKEY *pkey)
+                          const X509_ALGOR *sigalg, EVP_PKEY *pkey)
 {
     int rv = -1;
     int saltlen;
@@ -729,9 +751,34 @@ static int rsa_pss_to_ctx(EVP_MD_CTX *ctx, EVP_PKEY_CTX *pkctx,
     return rv;
 }
 
-int rsa_pss_get_param(const RSA_PSS_PARAMS *pss, const EVP_MD **pmd,
-                      const EVP_MD **pmgf1md, int *psaltlen)
+static int rsa_pss_verify_param(const EVP_MD **pmd, const EVP_MD **pmgf1md,
+                                int *psaltlen, int *ptrailerField)
 {
+    if (psaltlen != NULL && *psaltlen < 0) {
+        ERR_raise(ERR_LIB_RSA, RSA_R_INVALID_SALT_LENGTH);
+        return 0;
+    }
+    /*
+     * low-level routines support only trailer field 0xbc (value 1) and
+     * PKCS#1 says we should reject any other value anyway.
+     */
+    if (ptrailerField != NULL && *ptrailerField != 1) {
+        ERR_raise(ERR_LIB_RSA, RSA_R_INVALID_TRAILER);
+        return 0;
+    }
+    return 1;
+}
+
+static int rsa_pss_get_param_unverified(const RSA_PSS_PARAMS *pss,
+                                        const EVP_MD **pmd,
+                                        const EVP_MD **pmgf1md,
+                                        int *psaltlen, int *ptrailerField)
+{
+    RSA_PSS_PARAMS_30 pss_params;
+
+    /* Get the defaults from the ONE place */
+    (void)ossl_rsa_pss_params_30_set_defaults(&pss_params);
+
     if (pss == NULL)
         return 0;
     *pmd = rsa_algor_to_md(pss->hashAlgorithm);
@@ -740,25 +787,67 @@ int rsa_pss_get_param(const RSA_PSS_PARAMS *pss, const EVP_MD **pmd,
     *pmgf1md = rsa_algor_to_md(pss->maskHash);
     if (*pmgf1md == NULL)
         return 0;
-    if (pss->saltLength) {
+    if (pss->saltLength)
         *psaltlen = ASN1_INTEGER_get(pss->saltLength);
-        if (*psaltlen < 0) {
-            RSAerr(RSA_F_RSA_PSS_GET_PARAM, RSA_R_INVALID_SALT_LENGTH);
-            return 0;
-        }
-    } else {
-        *psaltlen = 20;
-    }
+    else
+        *psaltlen = ossl_rsa_pss_params_30_saltlen(&pss_params);
+    if (pss->trailerField)
+        *ptrailerField = ASN1_INTEGER_get(pss->trailerField);
+    else
+        *ptrailerField = ossl_rsa_pss_params_30_trailerfield(&pss_params);;
 
+    return 1;
+}
+
+int rsa_pss_get_param(const RSA_PSS_PARAMS *pss, const EVP_MD **pmd,
+                      const EVP_MD **pmgf1md, int *psaltlen)
+{
     /*
-     * low-level routines support only trailer field 0xbc (value 1) and
-     * PKCS#1 says we should reject any other value anyway.
+     * Callers do not care about the trailer field, and yet, we must
+     * pass it from get_param to verify_param, since the latter checks
+     * its value.
+     *
+     * When callers start caring, it's a simple thing to add another
+     * argument to this function.
      */
-    if (pss->trailerField && ASN1_INTEGER_get(pss->trailerField) != 1) {
-        RSAerr(RSA_F_RSA_PSS_GET_PARAM, RSA_R_INVALID_TRAILER);
-        return 0;
-    }
+    int trailerField = 0;
 
+    return rsa_pss_get_param_unverified(pss, pmd, pmgf1md, psaltlen,
+                                        &trailerField)
+        && rsa_pss_verify_param(pmd, pmgf1md, psaltlen, &trailerField);
+}
+
+static int rsa_sync_to_pss_params_30(RSA *rsa)
+{
+    if (rsa != NULL && rsa->pss != NULL) {
+        const EVP_MD *md = NULL, *mgf1md = NULL;
+        int md_nid, mgf1md_nid, saltlen, trailerField;
+        RSA_PSS_PARAMS_30 pss_params;
+
+        /*
+         * We don't care about the validity of the fields here, we just
+         * want to synchronise values.  Verifying here makes it impossible
+         * to even read a key with invalid values, making it hard to test
+         * a bad situation.
+         *
+         * Other routines use rsa_pss_get_param(), so the values will be
+         * checked, eventually.
+         */
+        if (!rsa_pss_get_param_unverified(rsa->pss, &md, &mgf1md,
+                                          &saltlen, &trailerField))
+            return 0;
+        md_nid = EVP_MD_type(md);
+        mgf1md_nid = EVP_MD_type(mgf1md);
+        if (!ossl_rsa_pss_params_30_set_defaults(&pss_params)
+            || !ossl_rsa_pss_params_30_set_hashalg(&pss_params, md_nid)
+            || !ossl_rsa_pss_params_30_set_maskgenhashalg(&pss_params,
+                                                          mgf1md_nid)
+            || !ossl_rsa_pss_params_30_set_saltlen(&pss_params, saltlen)
+            || !ossl_rsa_pss_params_30_set_trailerfield(&pss_params,
+                                                        trailerField))
+            return 0;
+        rsa->pss_params = pss_params;
+    }
     return 1;
 }
 
@@ -794,9 +883,9 @@ static int rsa_cms_verify(CMS_SignerInfo *si)
  * is encountered requiring special handling. We currently only handle PSS.
  */
 
-static int rsa_item_verify(EVP_MD_CTX *ctx, const ASN1_ITEM *it, void *asn,
-                           X509_ALGOR *sigalg, ASN1_BIT_STRING *sig,
-                           EVP_PKEY *pkey)
+static int rsa_item_verify(EVP_MD_CTX *ctx, const ASN1_ITEM *it,
+                           const void *asn, const X509_ALGOR *sigalg,
+                           const ASN1_BIT_STRING *sig, EVP_PKEY *pkey)
 {
     /* Sanity check: make sure it is PSS */
     if (OBJ_obj2nid(sigalg->algorithm) != EVP_PKEY_RSA_PSS) {
@@ -838,7 +927,7 @@ static int rsa_cms_sign(CMS_SignerInfo *si)
 }
 #endif
 
-static int rsa_item_sign(EVP_MD_CTX *ctx, const ASN1_ITEM *it, void *asn,
+static int rsa_item_sign(EVP_MD_CTX *ctx, const ASN1_ITEM *it, const void *asn,
                          X509_ALGOR *alg1, X509_ALGOR *alg2,
                          ASN1_BIT_STRING *sig)
 {
@@ -1127,7 +1216,7 @@ static int rsa_int_export_to(const EVP_PKEY *from, int rsa_type,
     if (RSA_get0_n(rsa) == NULL || RSA_get0_e(rsa) == NULL)
         goto err;
 
-    if (!rsa_todata(rsa, tmpl, NULL))
+    if (!ossl_rsa_todata(rsa, tmpl, NULL))
         goto err;
 
     selection |= OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
@@ -1136,18 +1225,20 @@ static int rsa_int_export_to(const EVP_PKEY *from, int rsa_type,
 
     if (rsa->pss != NULL) {
         const EVP_MD *md = NULL, *mgf1md = NULL;
-        int md_nid, mgf1md_nid, saltlen;
+        int md_nid, mgf1md_nid, saltlen, trailerfield;
         RSA_PSS_PARAMS_30 pss_params;
 
-        if (!rsa_pss_get_param(rsa->pss, &md, &mgf1md, &saltlen))
+        if (!rsa_pss_get_param_unverified(rsa->pss, &md, &mgf1md,
+                                          &saltlen, &trailerfield))
             goto err;
         md_nid = EVP_MD_type(md);
         mgf1md_nid = EVP_MD_type(mgf1md);
-        if (!rsa_pss_params_30_set_defaults(&pss_params)
-            || !rsa_pss_params_30_set_hashalg(&pss_params, md_nid)
-            || !rsa_pss_params_30_set_maskgenhashalg(&pss_params, mgf1md_nid)
-            || !rsa_pss_params_30_set_saltlen(&pss_params, saltlen)
-            || !rsa_pss_params_30_todata(&pss_params, propq, tmpl, NULL))
+        if (!ossl_rsa_pss_params_30_set_defaults(&pss_params)
+            || !ossl_rsa_pss_params_30_set_hashalg(&pss_params, md_nid)
+            || !ossl_rsa_pss_params_30_set_maskgenhashalg(&pss_params,
+                                                          mgf1md_nid)
+            || !ossl_rsa_pss_params_30_set_saltlen(&pss_params, saltlen)
+            || !ossl_rsa_pss_params_30_todata(&pss_params, tmpl, NULL))
             goto err;
         selection |= OSSL_KEYMGMT_SELECT_OTHER_PARAMETERS;
     }
@@ -1169,7 +1260,7 @@ static int rsa_int_import_from(const OSSL_PARAM params[], void *vpctx,
 {
     EVP_PKEY_CTX *pctx = vpctx;
     EVP_PKEY *pkey = EVP_PKEY_CTX_get0_pkey(pctx);
-    RSA *rsa = rsa_new_with_ctx(pctx->libctx);
+    RSA *rsa = ossl_rsa_new_with_ctx(pctx->libctx);
     RSA_PSS_PARAMS_30 rsa_pss_params = { 0, };
     int ok = 0;
 
@@ -1181,7 +1272,7 @@ static int rsa_int_import_from(const OSSL_PARAM params[], void *vpctx,
     RSA_clear_flags(rsa, RSA_FLAG_TYPE_MASK);
     RSA_set_flags(rsa, rsa_type);
 
-    if (!rsa_pss_params_30_fromdata(&rsa_pss_params, params, pctx->libctx))
+    if (!ossl_rsa_pss_params_30_fromdata(&rsa_pss_params, params, pctx->libctx))
         goto err;
 
     switch (rsa_type) {
@@ -1190,7 +1281,7 @@ static int rsa_int_import_from(const OSSL_PARAM params[], void *vpctx,
          * Were PSS parameters filled in?
          * In that case, something's wrong
          */
-        if (!rsa_pss_params_30_is_unrestricted(&rsa_pss_params))
+        if (!ossl_rsa_pss_params_30_is_unrestricted(&rsa_pss_params))
             goto err;
         break;
     case RSA_FLAG_TYPE_RSASSAPSS:
@@ -1198,11 +1289,11 @@ static int rsa_int_import_from(const OSSL_PARAM params[], void *vpctx,
          * Were PSS parameters filled in?  In that case, create the old
          * RSA_PSS_PARAMS structure.  Otherwise, this is an unrestricted key.
          */
-        if (!rsa_pss_params_30_is_unrestricted(&rsa_pss_params)) {
+        if (!ossl_rsa_pss_params_30_is_unrestricted(&rsa_pss_params)) {
             /* Create the older RSA_PSS_PARAMS from RSA_PSS_PARAMS_30 data */
-            int mdnid = rsa_pss_params_30_hashalg(&rsa_pss_params);
-            int mgf1mdnid = rsa_pss_params_30_maskgenhashalg(&rsa_pss_params);
-            int saltlen = rsa_pss_params_30_saltlen(&rsa_pss_params);
+            int mdnid = ossl_rsa_pss_params_30_hashalg(&rsa_pss_params);
+            int mgf1mdnid = ossl_rsa_pss_params_30_maskgenhashalg(&rsa_pss_params);
+            int saltlen = ossl_rsa_pss_params_30_saltlen(&rsa_pss_params);
             const EVP_MD *md = EVP_get_digestbynid(mdnid);
             const EVP_MD *mgf1md = EVP_get_digestbynid(mgf1mdnid);
 
@@ -1215,7 +1306,7 @@ static int rsa_int_import_from(const OSSL_PARAM params[], void *vpctx,
         goto err;
     }
 
-    if (!rsa_fromdata(rsa, params))
+    if (!ossl_rsa_fromdata(rsa, params))
         goto err;
 
     switch (rsa_type) {

@@ -180,7 +180,11 @@ static const OSSL_DISPATCH xor_keyexch_functions[] = {
 };
 
 static const OSSL_ALGORITHM tls_prov_keyexch[] = {
-    { "XOR", "provider=tls-provider", xor_keyexch_functions },
+    /*
+     * Obviously this is not FIPS approved, but in order to test in conjuction
+     * with the FIPS provider we pretend that it is.
+     */
+    { "XOR", "provider=tls-provider,fips=yes", xor_keyexch_functions },
     { NULL, NULL, NULL }
 };
 
@@ -286,7 +290,7 @@ static const OSSL_PARAM xor_params[] = {
     OSSL_PARAM_END
 };
 
-static const OSSL_PARAM *xor_gettable_params(void)
+static const OSSL_PARAM *xor_gettable_params(void *provctx)
 {
     return xor_params;
 }
@@ -313,7 +317,7 @@ static const OSSL_PARAM xor_known_settable_params[] = {
     OSSL_PARAM_END
 };
 
-static const OSSL_PARAM *xor_settable_params(void)
+static const OSSL_PARAM *xor_settable_params(void *provctx)
 {
     return xor_known_settable_params;
 }
@@ -414,7 +418,11 @@ static const OSSL_DISPATCH xor_keymgmt_functions[] = {
 };
 
 static const OSSL_ALGORITHM tls_prov_keymgmt[] = {
-    { "XOR", "provider=tls-provider", xor_keymgmt_functions },
+    /*
+     * Obviously this is not FIPS approved, but in order to test in conjuction
+     * with the FIPS provider we pretend that it is.
+     */
+    { "XOR", "provider=tls-provider,fips=yes", xor_keymgmt_functions },
     { NULL, NULL, NULL }
 };
 

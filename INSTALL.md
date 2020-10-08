@@ -695,6 +695,11 @@ memory allocation).
 
 Don't compile the FIPS provider
 
+### no-fips-securitychecks
+
+Don't perform FIPS module run-time checks related to enforcement of security
+parameters such as minimum security strength of keys.
+
 ### enable-fuzz-libfuzzer, enable-fuzz-afl
 
 Build with support for fuzzing using either libfuzzer or AFL.
@@ -1465,6 +1470,9 @@ described here.  Examine the Makefiles themselves for the full list.
 
     install_html_docs
                    Only install the OpenSSL HTML documentation.
+                   
+    install_fips
+                   Install the FIPS provider module configuration file.
 
     list-tests
                    Prints a list of all the self test names.

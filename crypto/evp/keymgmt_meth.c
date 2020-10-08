@@ -16,7 +16,6 @@
 #include "crypto/evp.h"
 #include "evp_local.h"
 
-
 static void *keymgmt_new(void)
 {
     EVP_KEYMGMT *keymgmt = NULL;
@@ -250,6 +249,11 @@ int EVP_KEYMGMT_number(const EVP_KEYMGMT *keymgmt)
     return keymgmt->name_id;
 }
 
+const char *EVP_KEYMGMT_get0_first_name(const EVP_KEYMGMT *keymgmt)
+{
+    return evp_first_name(keymgmt->prov, keymgmt->name_id);
+}
+
 int EVP_KEYMGMT_is_a(const EVP_KEYMGMT *keymgmt, const char *name)
 {
     return evp_is_a(keymgmt->prov, keymgmt->name_id, NULL, name);
@@ -328,7 +332,7 @@ int evp_keymgmt_gen_set_params(const EVP_KEYMGMT *keymgmt, void *genctx,
     return keymgmt->gen_set_params(genctx, params);
 }
 
-const OSSL_PARAM *evp_keymgmt_gen_settable_params(const EVP_KEYMGMT *keymgmt)
+const OSSL_PARAM *EVP_KEYMGMT_gen_settable_params(const EVP_KEYMGMT *keymgmt)
 {
     void *provctx = ossl_provider_ctx(EVP_KEYMGMT_provider(keymgmt));
 
@@ -367,11 +371,13 @@ int evp_keymgmt_get_params(const EVP_KEYMGMT *keymgmt, void *keydata,
     return keymgmt->get_params(keydata, params);
 }
 
-const OSSL_PARAM *evp_keymgmt_gettable_params(const EVP_KEYMGMT *keymgmt)
+const OSSL_PARAM *EVP_KEYMGMT_gettable_params(const EVP_KEYMGMT *keymgmt)
 {
+    void *provctx = ossl_provider_ctx(EVP_KEYMGMT_provider(keymgmt));
+
     if (keymgmt->gettable_params == NULL)
         return NULL;
-    return keymgmt->gettable_params();
+    return keymgmt->gettable_params(provctx);
 }
 
 int evp_keymgmt_set_params(const EVP_KEYMGMT *keymgmt, void *keydata,
@@ -382,11 +388,13 @@ int evp_keymgmt_set_params(const EVP_KEYMGMT *keymgmt, void *keydata,
     return keymgmt->set_params(keydata, params);
 }
 
-const OSSL_PARAM *evp_keymgmt_settable_params(const EVP_KEYMGMT *keymgmt)
+const OSSL_PARAM *EVP_KEYMGMT_settable_params(const EVP_KEYMGMT *keymgmt)
 {
+    void *provctx = ossl_provider_ctx(EVP_KEYMGMT_provider(keymgmt));
+
     if (keymgmt->settable_params == NULL)
         return NULL;
-    return keymgmt->settable_params();
+    return keymgmt->settable_params(provctx);
 }
 
 int evp_keymgmt_has(const EVP_KEYMGMT *keymgmt, void *keydata, int selection)

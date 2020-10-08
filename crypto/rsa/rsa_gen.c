@@ -24,6 +24,7 @@
 #include "internal/cryptlib.h"
 #include <openssl/bn.h>
 #include <openssl/self_test.h>
+#include "prov/providercommon.h"
 #include "rsa_local.h"
 
 static int rsa_keygen_pairwise_test(RSA *rsa, OSSL_CALLBACK *cb, void *cbarg);
@@ -66,7 +67,7 @@ int RSA_generate_multi_prime_key(RSA *rsa, int bits, int primes,
         else
             return 0;
     }
-#endif /* FIPS_MODUKE */
+#endif /* FIPS_MODULE */
     return rsa_keygen(rsa->libctx, rsa, bits, primes, e_value, cb, 0);
 }
 
@@ -91,7 +92,7 @@ static int rsa_multiprime_keygen(RSA *rsa, int bits, int primes,
     }
 
     /* A bad value for e can cause infinite loops */
-    if (e_value != NULL && !rsa_check_public_exponent(e_value)) {
+    if (e_value != NULL && !ossl_rsa_check_public_exponent(e_value)) {
         RSAerr(0, RSA_R_PUB_EXPONENT_OUT_OF_RANGE);
         return 0;
     }
@@ -428,7 +429,7 @@ static int rsa_keygen(OPENSSL_CTX *libctx, RSA *rsa, int bits, int primes,
      * the older rsa_multiprime_keygen().
      */
     if (primes == 2 && bits >= 2048)
-        ok = rsa_sp800_56b_generate_key(rsa, bits, e_value, cb);
+        ok = ossl_rsa_sp800_56b_generate_key(rsa, bits, e_value, cb);
 #ifndef FIPS_MODULE
     else
         ok = rsa_multiprime_keygen(rsa, bits, primes, e_value, cb);
@@ -444,6 +445,7 @@ static int rsa_keygen(OPENSSL_CTX *libctx, RSA *rsa, int bits, int primes,
         OSSL_SELF_TEST_get_callback(libctx, &stcb, &stcbarg);
         ok = rsa_keygen_pairwise_test(rsa, stcb, stcbarg);
         if (!ok) {
+            ossl_set_error_state(OSSL_SELF_TEST_TYPE_PCT);
             /* Clear intermediate results */
             BN_clear_free(rsa->d);
             BN_clear_free(rsa->p);

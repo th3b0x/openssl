@@ -53,22 +53,25 @@ int ASN1_digest(i2d_of_void *i2d, const EVP_MD *type, char *data,
 
 #endif
 
-int asn1_item_digest_with_libctx(const ASN1_ITEM *it, const EVP_MD *md,
-                                 void *asn, unsigned char *data,
-                                 unsigned int *len, OPENSSL_CTX *libctx,
-                                 const char *propq)
+int asn1_item_digest_ex(const ASN1_ITEM *it, const EVP_MD *md, void *asn,
+                        unsigned char *data, unsigned int *len,
+                        OPENSSL_CTX *libctx, const char *propq)
 {
     int i, ret = 0;
     unsigned char *str = NULL;
     EVP_MD *fetched_md = (EVP_MD *)md;
 
     i = ASN1_item_i2d(asn, &str, it);
-    if (str == NULL)
+    if (i < 0 || str == NULL)
         return 0;
 
     if (EVP_MD_provider(md) == NULL) {
 #if !defined(OPENSSL_NO_ENGINE)
-        if (ENGINE_get_digest_engine(EVP_MD_type(md)) == NULL)
+        ENGINE *tmpeng = ENGINE_get_digest_engine(EVP_MD_type(md));
+
+        if (tmpeng != NULL)
+            ENGINE_finish(tmpeng);
+        else
 #endif
             fetched_md = EVP_MD_fetch(libctx, EVP_MD_name(md), propq);
     }
@@ -86,6 +89,6 @@ err:
 int ASN1_item_digest(const ASN1_ITEM *it, const EVP_MD *md, void *asn,
                      unsigned char *data, unsigned int *len)
 {
-    return asn1_item_digest_with_libctx(it, md, asn, data, len, NULL, NULL);
+    return asn1_item_digest_ex(it, md, asn, data, len, NULL, NULL);
 }
 

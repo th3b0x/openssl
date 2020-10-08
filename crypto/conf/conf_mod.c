@@ -21,7 +21,6 @@
 #include <openssl/trace.h>
 #include <openssl/engine.h>
 
-DEFINE_STACK_OF(CONF_VALUE)
 DEFINE_STACK_OF(CONF_MODULE)
 DEFINE_STACK_OF(CONF_IMODULE)
 
@@ -79,6 +78,18 @@ static int module_init(CONF_MODULE *pmod, const char *name, const char *value,
 static CONF_MODULE *module_load_dso(const CONF *cnf, const char *name,
                                     const char *value);
 
+static int conf_diagnostics(const CONF *cnf)
+{
+    long int lflag = 0;
+    int res;
+
+    ERR_set_mark();
+    res = NCONF_get_number(cnf, NULL, "config_diagnostics", &lflag)
+          && lflag != 0;
+    ERR_pop_to_mark();
+    return res;
+}
+
 /* Main function: load modules from a CONF structure */
 
 int CONF_modules_load(const CONF *cnf, const char *appname,
@@ -87,11 +98,16 @@ int CONF_modules_load(const CONF *cnf, const char *appname,
     STACK_OF(CONF_VALUE) *values;
     CONF_VALUE *vl;
     char *vsection = NULL;
-
     int ret, i;
 
     if (!cnf)
         return 1;
+
+    if (conf_diagnostics(cnf))
+        flags &= ~(CONF_MFLAGS_IGNORE_ERRORS
+                   | CONF_MFLAGS_IGNORE_RETURN_CODES
+                   | CONF_MFLAGS_SILENT
+                   | CONF_MFLAGS_IGNORE_MISSING_FILE);
 
     if (appname)
         vsection = NCONF_get_string(cnf, NULL, appname);
@@ -107,8 +123,13 @@ int CONF_modules_load(const CONF *cnf, const char *appname,
     OSSL_TRACE1(CONF, "Configuration in section %s\n", vsection);
     values = NCONF_get_section(cnf, vsection);
 
-    if (!values)
+    if (values == NULL) {
+        if (!(flags & CONF_MFLAGS_SILENT)) {
+            CONFerr(0, CONF_R_OPENSSL_CONF_REFERENCES_MISSING_SECTION);
+            ERR_add_error_data(2, "openssl_conf=", vsection);
+        }
         return 0;
+    }
 
     for (i = 0; i < sk_CONF_VALUE_num(values); i++) {
         vl = sk_CONF_VALUE_value(values, i);
@@ -124,15 +145,14 @@ int CONF_modules_load(const CONF *cnf, const char *appname,
 
 }
 
-int CONF_modules_load_file_with_libctx(OPENSSL_CTX *libctx,
-                                       const char *filename,
-                                       const char *appname, unsigned long flags)
+int CONF_modules_load_file_ex(OPENSSL_CTX *libctx, const char *filename,
+                              const char *appname, unsigned long flags)
 {
     char *file = NULL;
     CONF *conf = NULL;
-    int ret = 0;
+    int ret = 0, diagnostics = 0;
 
-    conf = NCONF_new_with_libctx(libctx, NULL);
+    conf = NCONF_new_ex(libctx, NULL);
     if (conf == NULL)
         goto err;
 
@@ -154,13 +174,14 @@ int CONF_modules_load_file_with_libctx(OPENSSL_CTX *libctx,
     }
 
     ret = CONF_modules_load(conf, appname, flags);
+    diagnostics = conf_diagnostics(conf);
 
  err:
     if (filename == NULL)
         OPENSSL_free(file);
     NCONF_free(conf);
 
-    if (flags & CONF_MFLAGS_IGNORE_RETURN_CODES)
+    if ((flags & CONF_MFLAGS_IGNORE_RETURN_CODES) != 0 && !diagnostics)
         return 1;
 
     return ret;
@@ -169,7 +190,7 @@ int CONF_modules_load_file_with_libctx(OPENSSL_CTX *libctx,
 int CONF_modules_load_file(const char *filename,
                            const char *appname, unsigned long flags)
 {
-    return CONF_modules_load_file_with_libctx(NULL, filename, appname, flags);
+    return CONF_modules_load_file_ex(NULL, filename, appname, flags);
 }
 
 DEFINE_RUN_ONCE_STATIC(do_load_builtin_modules)

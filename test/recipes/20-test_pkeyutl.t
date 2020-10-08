@@ -31,7 +31,8 @@ SKIP: {
                       '-out', 'sm2.sig', '-rawin',
                       '-digest', 'sm3', '-pkeyopt', 'distid:someid']))),
                       "Sign a piece of data using SM2");
-    ok_nofips(run(app(([ 'openssl', 'pkeyutl', '-verify', '-certin',
+    ok_nofips(run(app(([ 'openssl', 'pkeyutl',
+                      '-verify', '-certin',
                       '-in', srctop_file('test', 'certs', 'sm2.pem'),
                       '-inkey', srctop_file('test', 'certs', 'sm2.pem'),
                       '-sigfile', 'sm2.sig', '-rawin',

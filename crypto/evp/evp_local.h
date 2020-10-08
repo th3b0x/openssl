@@ -69,34 +69,10 @@ struct evp_kdf_ctx_st {
 struct evp_rand_ctx_st {
     EVP_RAND *meth;             /* Method structure */
     void *data;                 /* Algorithm-specific data */
-} /* EVP_RAND_CTX */ ;
-
-struct evp_rand_st {
-    OSSL_PROVIDER *prov;
-    int name_id;
-    CRYPTO_REF_COUNT refcnt;
+    EVP_RAND_CTX *parent;       /* Parent EVP_RAND or NULL if none */
+    CRYPTO_REF_COUNT refcnt;    /* Context reference count */
     CRYPTO_RWLOCK *refcnt_lock;
-
-    const OSSL_DISPATCH *dispatch;
-    OSSL_FUNC_rand_newctx_fn *newctx;
-    OSSL_FUNC_rand_freectx_fn *freectx;
-    OSSL_FUNC_rand_instantiate_fn *instantiate;
-    OSSL_FUNC_rand_uninstantiate_fn *uninstantiate;
-    OSSL_FUNC_rand_generate_fn *generate;
-    OSSL_FUNC_rand_reseed_fn *reseed;
-    OSSL_FUNC_rand_nonce_fn *nonce;
-    OSSL_FUNC_rand_enable_locking_fn *enable_locking;
-    OSSL_FUNC_rand_lock_fn *lock;
-    OSSL_FUNC_rand_unlock_fn *unlock;
-    OSSL_FUNC_rand_gettable_params_fn *gettable_params;
-    OSSL_FUNC_rand_gettable_ctx_params_fn *gettable_ctx_params;
-    OSSL_FUNC_rand_settable_ctx_params_fn *settable_ctx_params;
-    OSSL_FUNC_rand_get_params_fn *get_params;
-    OSSL_FUNC_rand_get_ctx_params_fn *get_ctx_params;
-    OSSL_FUNC_rand_set_ctx_params_fn *set_ctx_params;
-    OSSL_FUNC_rand_set_callbacks_fn *set_callbacks;
-    OSSL_FUNC_rand_verify_zeroization_fn *verify_zeroization;
-} /* EVP_RAND */ ;
+} /* EVP_RAND_CTX */ ;
 
 struct evp_keymgmt_st {
     int id;                      /* libcrypto internal */
@@ -208,6 +184,25 @@ struct evp_asym_cipher_st {
     OSSL_FUNC_asym_cipher_settable_ctx_params_fn *settable_ctx_params;
 } /* EVP_ASYM_CIPHER */;
 
+struct evp_kem_st {
+    int name_id;
+    OSSL_PROVIDER *prov;
+    CRYPTO_REF_COUNT refcnt;
+    CRYPTO_RWLOCK *lock;
+
+    OSSL_FUNC_kem_newctx_fn *newctx;
+    OSSL_FUNC_kem_encapsulate_init_fn *encapsulate_init;
+    OSSL_FUNC_kem_encapsulate_fn *encapsulate;
+    OSSL_FUNC_kem_decapsulate_init_fn *decapsulate_init;
+    OSSL_FUNC_kem_decapsulate_fn *decapsulate;
+    OSSL_FUNC_kem_freectx_fn *freectx;
+    OSSL_FUNC_kem_dupctx_fn *dupctx;
+    OSSL_FUNC_kem_get_ctx_params_fn *get_ctx_params;
+    OSSL_FUNC_kem_gettable_ctx_params_fn *gettable_ctx_params;
+    OSSL_FUNC_kem_set_ctx_params_fn *set_ctx_params;
+    OSSL_FUNC_kem_settable_ctx_params_fn *settable_ctx_params;
+} /* EVP_KEM */;
+
 int PKCS5_v2_PBKDF2_keyivgen(EVP_CIPHER_CTX *ctx, const char *pass,
                              int passlen, ASN1_TYPE *param,
                              const EVP_CIPHER *c, const EVP_MD *md,
@@ -266,6 +261,11 @@ EVP_KEYMGMT *evp_keymgmt_fetch_by_number(OPENSSL_CTX *ctx, int name_id,
 /* Internal structure constructors for fetched methods */
 EVP_MD *evp_md_new(void);
 EVP_CIPHER *evp_cipher_new(void);
+
+int evp_cipher_get_asn1_aead_params(EVP_CIPHER_CTX *c, ASN1_TYPE *type,
+                                    evp_cipher_aead_asn1_params *asn1_params);
+int evp_cipher_set_asn1_aead_params(EVP_CIPHER_CTX *c, ASN1_TYPE *type,
+                                    evp_cipher_aead_asn1_params *asn1_params);
 
 /* Helper functions to avoid duplicating code */
 

@@ -20,9 +20,6 @@
 # define strcasecmp _stricmp
 #endif
 
-DEFINE_STACK_OF(CONF_VALUE)
-DEFINE_STACK_OF(X509_NAME)
-
 static const int default_app_data_size = 256;
 /* Default set to be as small as possible to exercise fragmentation. */
 static const int default_max_fragment_size = 512;
@@ -616,7 +613,7 @@ __owur static int parse_expected_ca_names(STACK_OF(X509_NAME) **pnames,
     if (!strcmp(value, "empty"))
         *pnames = sk_X509_NAME_new_null();
     else
-        *pnames = SSL_load_client_CA_file_with_libctx(value, libctx, NULL);
+        *pnames = SSL_load_client_CA_file_ex(value, libctx, NULL);
     return *pnames != NULL;
 }
 __owur static int parse_expected_server_ca_names(SSL_TEST_CTX *test_ctx,

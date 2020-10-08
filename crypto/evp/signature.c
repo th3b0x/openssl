@@ -337,6 +337,28 @@ void EVP_SIGNATURE_names_do_all(const EVP_SIGNATURE *signature,
         evp_names_do_all(signature->prov, signature->name_id, fn, data);
 }
 
+const OSSL_PARAM *EVP_SIGNATURE_gettable_ctx_params(const EVP_SIGNATURE *sig)
+{
+    void *provctx;
+
+    if (sig == NULL || sig->gettable_ctx_params == NULL)
+        return NULL;
+
+    provctx = ossl_provider_ctx(EVP_SIGNATURE_provider(sig));
+    return sig->gettable_ctx_params(provctx);
+}
+
+const OSSL_PARAM *EVP_SIGNATURE_settable_ctx_params(const EVP_SIGNATURE *sig)
+{
+    void *provctx;
+
+    if (sig == NULL || sig->settable_ctx_params == NULL)
+        return NULL;
+
+    provctx = ossl_provider_ctx(EVP_SIGNATURE_provider(sig));
+    return sig->settable_ctx_params(provctx);
+}
+
 static int evp_pkey_signature_init(EVP_PKEY_CTX *ctx, int operation)
 {
     int ret = 0;
@@ -359,7 +381,7 @@ static int evp_pkey_signature_init(EVP_PKEY_CTX *ctx, int operation)
      */
     ERR_set_mark();
 
-    if (ctx->keymgmt == NULL)
+    if (evp_pkey_ctx_is_legacy(ctx))
         goto legacy;
 
     /*
@@ -460,7 +482,7 @@ static int evp_pkey_signature_init(EVP_PKEY_CTX *ctx, int operation)
         ctx->op.sig.sigprovctx = NULL;
         goto err;
     }
-    return 1;
+    goto end;
 
  legacy:
     /*
@@ -501,8 +523,13 @@ static int evp_pkey_signature_init(EVP_PKEY_CTX *ctx, int operation)
     }
     if (ret <= 0)
         goto err;
-    return ret;
+ end:
+#ifndef FIPS_MODULE
+    if (ret > 0)
+        ret = evp_pkey_ctx_use_cached_data(ctx);
+#endif
 
+    return ret;
  err:
     evp_pkey_ctx_free_old_ops(ctx);
     ctx->operation = EVP_PKEY_OP_UNDEFINED;

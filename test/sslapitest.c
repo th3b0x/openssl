@@ -47,9 +47,6 @@ int tls_provider_init(const OSSL_CORE_HANDLE *handle,
                       const OSSL_DISPATCH *in,
                       const OSSL_DISPATCH **out,
                       void **provctx);
-DEFINE_STACK_OF(OCSP_RESPID)
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(X509_NAME)
 
 static OPENSSL_CTX *libctx = NULL;
 static OSSL_PROVIDER *defctxnull = NULL;
@@ -800,7 +797,7 @@ static int execute_test_large_message(const SSL_METHOD *smeth,
     if (!TEST_ptr(certbio = BIO_new_file(cert, "r")))
         goto end;
 
-    if (!TEST_ptr(chaincert = X509_new_with_libctx(libctx, NULL)))
+    if (!TEST_ptr(chaincert = X509_new_ex(libctx, NULL)))
         goto end;
 
     if (PEM_read_bio_X509(certbio, &chaincert, NULL, NULL) == NULL)
@@ -993,6 +990,7 @@ static int execute_test_ktls(int cis_ktls_tx, int cis_ktls_rx,
                                        tls_version, tls_version,
                                        &sctx, &cctx, cert, privkey))
             || !TEST_true(SSL_CTX_set_cipher_list(cctx, cipher))
+            || !TEST_true(SSL_CTX_set_cipher_list(sctx, cipher))
             || !TEST_true(create_ssl_objects2(sctx, cctx, &serverssl,
                                           &clientssl, sfd, cfd)))
         goto end;
@@ -1107,6 +1105,7 @@ static int test_ktls_sendfile(int tls_version, const char *cipher)
                                        tls_version, tls_version,
                                        &sctx, &cctx, cert, privkey))
         || !TEST_true(SSL_CTX_set_cipher_list(cctx, cipher))
+        || !TEST_true(SSL_CTX_set_cipher_list(sctx, cipher))
         || !TEST_true(create_ssl_objects2(sctx, cctx, &serverssl,
                                           &clientssl, sfd, cfd)))
         goto end;
@@ -1116,7 +1115,9 @@ static int test_ktls_sendfile(int tls_version, const char *cipher)
         || !TEST_true(BIO_get_ktls_send(serverssl->wbio)))
         goto end;
 
-    RAND_bytes(buf, SENDFILE_SZ);
+    if (!TEST_true(RAND_bytes_ex(libctx, buf, SENDFILE_SZ)))
+        goto end;
+
     out = BIO_new_file(tmpfilename, "wb");
     if (!TEST_ptr(out))
         goto end;
@@ -1177,314 +1178,11 @@ end:
     return testresult;
 }
 
-static int test_ktls_no_txrx_client_no_txrx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(0, 0, 0, 0, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(0, 0, 0, 0, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(0, 0, 0, 0, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_rx_client_no_txrx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(1, 0, 0, 0, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(1, 0, 0, 0, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(1, 0, 0, 0, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_tx_client_no_txrx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(0, 1, 0, 0, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(0, 1, 0, 0, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(0, 1, 0, 0, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_client_no_txrx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(1, 1, 0, 0, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(1, 1, 0, 0, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(1, 1, 0, 0, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_txrx_client_no_rx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(0, 0, 1, 0, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(0, 0, 1, 0, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(0, 0, 1, 0, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_rx_client_no_rx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(1, 0, 1, 0, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(1, 0, 1, 0, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(1, 0, 1, 0, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_tx_client_no_rx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(0, 1, 1, 0, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(0, 1, 1, 0, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(0, 1, 1, 0, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_client_no_rx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(1, 1, 1, 0, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(1, 1, 1, 0, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(1, 1, 1, 0, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_txrx_client_no_tx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(0, 0, 0, 1, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(0, 0, 0, 1, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(0, 0, 0, 1, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_rx_client_no_tx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(1, 0, 0, 1, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(1, 0, 0, 1, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(1, 0, 0, 1, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_tx_client_no_tx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(0, 1, 0, 1, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(0, 1, 0, 1, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(0, 1, 0, 1, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_client_no_tx_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(1, 1, 0, 1, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(1, 1, 0, 1, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(1, 1, 0, 1, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_txrx_client_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(0, 0, 1, 1, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(0, 0, 1, 1, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(0, 0, 1, 1, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_rx_client_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(1, 0, 1, 1, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(1, 0, 1, 1, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(1, 0, 1, 1, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_no_tx_client_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(0, 1, 1, 1, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(0, 1, 1, 1, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(0, 1, 1, 1, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
-static int test_ktls_client_server(int tlsver)
-{
-    int testresult = 1;
-
-#ifdef OPENSSL_KTLS_AES_GCM_128
-    testresult &= execute_test_ktls(1, 1, 1, 1, tlsver,
-         "AES128-GCM-SHA256", TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_CCM_128
-    testresult &= execute_test_ktls(1, 1, 1, 1, tlsver,
-         "AES128-CCM-SHA256", TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
-#endif
-#ifdef OPENSSL_KTLS_AES_GCM_256
-    testresult &= execute_test_ktls(1, 1, 1, 1, tlsver,
-         "AES256-GCM-SHA384", TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
-#endif
-    return testresult;
-}
-
 #if !defined(OPENSSL_NO_TLS1_2) || !defined(OPENSSL_NO_TLS1_3)
 static int test_ktls(int test)
 {
-    int tlsver;
+    int cis_ktls_tx, cis_ktls_rx, sis_ktls_tx, sis_ktls_rx;
+    int tlsver, testresult;
 
     if (test > 15) {
 #if defined(OPENSSL_NO_TLS1_3)
@@ -1501,47 +1199,42 @@ static int test_ktls(int test)
 #endif
     }
 
-    switch(test) {
-    case 0:
-       return test_ktls_no_txrx_client_no_txrx_server(tlsver);
-    case 1:
-       return test_ktls_no_rx_client_no_txrx_server(tlsver);
-    case 2:
-       return test_ktls_no_tx_client_no_txrx_server(tlsver);
-    case 3:
-       return test_ktls_client_no_txrx_server(tlsver);
-    case 4:
-       return test_ktls_no_txrx_client_no_rx_server(tlsver);
-    case 5:
-       return test_ktls_no_rx_client_no_rx_server(tlsver);
-    case 6:
-       return test_ktls_no_tx_client_no_rx_server(tlsver);
-    case 7:
-       return test_ktls_client_no_rx_server(tlsver);
-    case 8:
-       return test_ktls_no_txrx_client_no_tx_server(tlsver);
-    case 9:
-       return test_ktls_no_rx_client_no_tx_server(tlsver);
-    case 10:
-       return test_ktls_no_tx_client_no_tx_server(tlsver);
-    case 11:
-       return test_ktls_client_no_tx_server(tlsver);
-    case 12:
-       return test_ktls_no_txrx_client_server(tlsver);
-    case 13:
-       return test_ktls_no_rx_client_server(tlsver);
-    case 14:
-       return test_ktls_no_tx_client_server(tlsver);
-    case 15:
-       return test_ktls_client_server(tlsver);
-    default:
-       return 0;
-    }
+    cis_ktls_tx = (test & 1) != 0;
+    cis_ktls_rx = (test & 2) != 0;
+    sis_ktls_tx = (test & 4) != 0;
+    sis_ktls_rx = (test & 8) != 0;
+
+#if defined(OPENSSL_NO_KTLS_RX)
+    if (cis_ktls_rx || sis_ktls_rx)
+        return 1;
+#endif
+#if !defined(OPENSSL_NO_TLS1_3)
+    if (tlsver == TLS1_3_VERSION && (cis_ktls_rx || sis_ktls_rx))
+        return 1;
+#endif
+
+    testresult = 1;
+#ifdef OPENSSL_KTLS_AES_GCM_128
+    testresult &= execute_test_ktls(cis_ktls_tx, cis_ktls_rx, sis_ktls_tx,
+                                    sis_ktls_rx, tlsver, "AES128-GCM-SHA256",
+                                    TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
+#endif
+#ifdef OPENSSL_KTLS_AES_CCM_128
+    testresult &= execute_test_ktls(cis_ktls_tx, cis_ktls_rx, sis_ktls_tx,
+                                    sis_ktls_rx, tlsver, "AES128-CCM",
+                                    TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE);
+#endif
+#ifdef OPENSSL_KTLS_AES_GCM_256
+    testresult &= execute_test_ktls(cis_ktls_tx, cis_ktls_rx, sis_ktls_tx,
+                                    sis_ktls_rx, tlsver, "AES256-GCM-SHA384",
+                                    TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE);
+#endif
+    return testresult;
 }
 
 static int test_ktls_sendfile_anytls(int tst)
 {
-    char *cipher[] = {"AES128-GCM-SHA256","AES128-CCM-SHA256","AES256-GCM-SHA384"};
+    char *cipher[] = {"AES128-GCM-SHA256","AES128-CCM","AES256-GCM-SHA384"};
     int tlsver;
 
     if (tst > 2) {
@@ -1853,7 +1546,7 @@ static int test_tlsext_status_type(void)
     if (!TEST_ptr(certbio = BIO_new_file(cert, "r"))
             || !TEST_ptr(id = OCSP_RESPID_new())
             || !TEST_ptr(ids = sk_OCSP_RESPID_new_null())
-            || !TEST_ptr(ocspcert = X509_new_with_libctx(libctx, NULL))
+            || !TEST_ptr(ocspcert = X509_new_ex(libctx, NULL))
             || !TEST_ptr(PEM_read_bio_X509(certbio, &ocspcert, NULL, NULL))
             || !TEST_true(OCSP_RESPID_set_by_key_ex(id, ocspcert, libctx, NULL))
             || !TEST_true(sk_OCSP_RESPID_push(ids, id)))
@@ -2875,7 +2568,7 @@ static int execute_test_ssl_bio(int pop_ssl, bio_change_t change_bio)
     SSL *ssl = NULL;
     int testresult = 0;
 
-    if (!TEST_ptr(ctx = SSL_CTX_new_with_libctx(libctx, NULL, TLS_method()))
+    if (!TEST_ptr(ctx = SSL_CTX_new_ex(libctx, NULL, TLS_method()))
             || !TEST_ptr(ssl = SSL_new(ctx))
             || !TEST_ptr(sslbio = BIO_new(BIO_f_ssl()))
             || !TEST_ptr(membio1 = BIO_new(BIO_s_mem())))
@@ -5586,7 +5279,7 @@ static int test_serverinfo(int tst)
     int ret, expected, testresult = 0;
     SSL_CTX *ctx;
 
-    ctx = SSL_CTX_new_with_libctx(libctx, NULL, TLS_method());
+    ctx = SSL_CTX_new_ex(libctx, NULL, TLS_method());
     if (!TEST_ptr(ctx))
         goto end;
 
@@ -5690,9 +5383,20 @@ static int test_export_key_mat(int tst)
         goto end;
 
     if (!TEST_true(create_ssl_objects(sctx, cctx, &serverssl, &clientssl, NULL,
-                                      NULL))
-            || !TEST_true(create_ssl_connection(serverssl, clientssl,
-                                                SSL_ERROR_NONE)))
+                                      NULL)))
+        goto end;
+
+    /*
+     * Premature call of SSL_export_keying_material should just fail.
+     */
+    if (!TEST_int_le(SSL_export_keying_material(clientssl, ckeymat1,
+                                                sizeof(ckeymat1), label,
+                                                SMALL_LABEL_LEN + 1, context,
+                                                sizeof(context) - 1, 1), 0))
+        goto end;
+
+    if (!TEST_true(create_ssl_connection(serverssl, clientssl,
+                                         SSL_ERROR_NONE)))
         goto end;
 
     if (tst == 5) {
@@ -6130,7 +5834,7 @@ static int test_max_fragment_len_ext(int idx_tst)
     int testresult = 0, MFL_mode = 0;
     BIO *rbio, *wbio;
 
-    ctx = SSL_CTX_new_with_libctx(libctx, NULL, TLS_method());
+    ctx = SSL_CTX_new_ex(libctx, NULL, TLS_method());
     if (!TEST_ptr(ctx))
         goto end;
 
@@ -6234,8 +5938,6 @@ static int test_pha_key_update(void)
 #if !defined(OPENSSL_NO_SRP) && !defined(OPENSSL_NO_TLS1_2)
 
 static SRP_VBASE *vbase = NULL;
-
-DEFINE_STACK_OF(SRP_user_pwd)
 
 static int ssl_srp_cb(SSL *s, int *ad, void *arg)
 {
@@ -6876,11 +6578,11 @@ static int int_test_ssl_get_shared_ciphers(int tst, int clnt)
      * having the full set of ciphersuites and once with the server side.
      */
     if (clnt) {
-        cctx = SSL_CTX_new_with_libctx(tmplibctx, NULL, TLS_client_method());
+        cctx = SSL_CTX_new_ex(tmplibctx, NULL, TLS_client_method());
         if (!TEST_ptr(cctx))
             goto end;
     } else {
-        sctx = SSL_CTX_new_with_libctx(tmplibctx, NULL, TLS_server_method());
+        sctx = SSL_CTX_new_ex(tmplibctx, NULL, TLS_server_method());
         if (!TEST_ptr(sctx))
             goto end;
     }
@@ -7486,7 +7188,7 @@ static int cert_cb(SSL *s, void *arg)
             goto out;
         if (!TEST_ptr(in = BIO_new(BIO_s_file()))
                 || !TEST_int_ge(BIO_read_filename(in, rootfile), 0)
-                || !TEST_ptr(rootx = X509_new_with_libctx(libctx, NULL))
+                || !TEST_ptr(rootx = X509_new_ex(libctx, NULL))
                 || !TEST_ptr(PEM_read_bio_X509(in, &rootx, NULL, NULL))
                 || !TEST_true(sk_X509_push(chain, rootx)))
             goto out;
@@ -7494,13 +7196,15 @@ static int cert_cb(SSL *s, void *arg)
         BIO_free(in);
         if (!TEST_ptr(in = BIO_new(BIO_s_file()))
                 || !TEST_int_ge(BIO_read_filename(in, ecdsacert), 0)
-                || !TEST_ptr(x509 = X509_new_with_libctx(libctx, NULL))
+                || !TEST_ptr(x509 = X509_new_ex(libctx, NULL))
                 || !TEST_ptr(PEM_read_bio_X509(in, &x509, NULL, NULL)))
             goto out;
         BIO_free(in);
         if (!TEST_ptr(in = BIO_new(BIO_s_file()))
                 || !TEST_int_ge(BIO_read_filename(in, ecdsakey), 0)
-                || !TEST_ptr(pkey = PEM_read_bio_PrivateKey(in, NULL, NULL, NULL)))
+                || !TEST_ptr(pkey = PEM_read_bio_PrivateKey_ex(in, NULL,
+                                                               NULL, NULL,
+                                                               libctx, NULL)))
             goto out;
         rv = SSL_check_chain(s, x509, pkey, chain);
         /*
@@ -7642,11 +7346,12 @@ static int client_cert_cb(SSL *ssl, X509 **x509, EVP_PKEY **pkey)
     if (!TEST_ptr(in))
         return 0;
 
-    if (!TEST_ptr(xcert = X509_new_with_libctx(libctx, NULL))
+    if (!TEST_ptr(xcert = X509_new_ex(libctx, NULL))
             || !TEST_ptr(PEM_read_bio_X509(in, &xcert, NULL, NULL))
             || !TEST_ptr(priv_in = BIO_new_file(privkey, "r"))
-            || !TEST_ptr(privpkey = PEM_read_bio_PrivateKey(priv_in, NULL, NULL,
-                                                            NULL)))
+            || !TEST_ptr(privpkey = PEM_read_bio_PrivateKey_ex(priv_in, NULL,
+                                                               NULL, NULL,
+                                                               libctx, NULL)))
         goto err;
 
     *x509 = xcert;
@@ -8160,8 +7865,8 @@ static int test_sigalgs_available(int idx)
             serverctx = tmpctx;
     }
 
-    cctx = SSL_CTX_new_with_libctx(clientctx, NULL, TLS_client_method());
-    sctx = SSL_CTX_new_with_libctx(serverctx, NULL, TLS_server_method());
+    cctx = SSL_CTX_new_ex(clientctx, NULL, TLS_client_method());
+    sctx = SSL_CTX_new_ex(serverctx, NULL, TLS_server_method());
     if (!TEST_ptr(cctx) || !TEST_ptr(sctx))
         goto end;
 
